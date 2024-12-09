@@ -459,9 +459,7 @@ static void process_mac_blocks(uint8_t S[16], const uint8_t* data, size_t data_l
 }
 
 /**
- * @brief Compute authentication tag over ciphertext (and optionally associated data).
- *
- * In this simplified demo, we only authenticate ciphertext (no separate AAD).
+ * @brief Compute authentication tag over ciphertext.
  *
  * Steps:
  * 1. Process ciphertext blocks.
@@ -475,7 +473,7 @@ static void compute_tag(const AuroraBlock* cipher, const uint8_t H[16], const ui
     for (i = 0; i < 16; i++) S[i] = 0;
     process_mac_blocks(S, C, C_len, H);
 
-    // Length block: a_bits = 0 (no AAD), c_bits = C_len*8
+    // Length block: a_bits = 0, c_bits = C_len*8
     uint64_t a_bits = 0ULL;
     uint64_t c_bits = (uint64_t)C_len * 8ULL;
     uint8_t length_block[16];
