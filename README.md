@@ -5,7 +5,7 @@
 Aurora-Sigma is a custom AEAD construction created by my friend, **rot32**, and is used in **SafeGuard** to securely transfer and receive data. It aims to show the structure of an authenticated encryption scheme:
 
 - **Authenticated Encryption**: Ensures that both confidentiality (encryption of the plaintext) and integrity (detection of tampering) are provided.
-- **No Associated Data**: This simplified version does not use associated data. The entire message (including the internally generated nonce) is protected by the authentication tag.
+- **No Associated Data**: This does not use associated data. The entire message (including the internally generated nonce) is protected by the authentication tag.
 - **Single-Message Interface**: The encryption function returns a single message consisting of `nonce || ciphertext || tag`. The decryption function only requires the secret key and this combined message to recover the original plaintext and verify integrity.
 
 ## What This Code Does
