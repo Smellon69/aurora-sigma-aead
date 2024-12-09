@@ -2,7 +2,7 @@
 
 ## Overview
 
-Aurora-Sigma is a custom AEAD construction. It aims to show the structure of an authenticated encryption scheme:
+Aurora-Sigma is a custom AEAD construction created by my friend, **rot32**, and is used in **SafeGuard** to securely transfer and receive data. It aims to show the structure of an authenticated encryption scheme:
 
 - **Authenticated Encryption**: Ensures that both confidentiality (encryption of the plaintext) and integrity (detection of tampering) are provided.
 - **No Associated Data**: This simplified version does not use associated data. The entire message (including the internally generated nonce) is protected by the authentication tag.
@@ -27,23 +27,36 @@ Aurora-Sigma is a custom AEAD construction. It aims to show the structure of an 
 - **main.cpp**:  
   A demonstration of how to:
   - Generate a key (randomly generated in this example).
-  - Encrypt a plaintext message into `nonce||ciphertext||tag`.
+  - Encrypt a plaintext message into `nonce || ciphertext || tag`.
   - Decrypt on the "server" side using just the key and the received message.
 
 ## Usage
 
-1. Clone the repository.
-2. Compile using a modern C/C++ compiler:
+1. **Clone the repository.**
+   
+   ```bash
+   git clone https://github.com/SafeGuard-Protection/aurora-sigma-aead.git
+   cd aurora-sigma-aead
+   ```
+
+2. **Compile using a modern C/C++ compiler:**
+   
    ```bash
    g++ -std=c++17 -O2 -o aurora_demo main.cpp
    ```
-3. Run the executable:
+
+3. **Run the executable:**
+   
    ```bash
    ./aurora_demo
    ```
    
-You will see the encryption and decryption in action.
+   You will see the encryption and decryption in action.
 
 ## License
 
-This code is provided as-is, with **no warranty**, under the MIT license. Refer to the LICENSE file for more details.
+This code is provided as-is, with **no warranty**, under the MIT license. Refer to the [LICENSE](LICENSE) file for more details.
+
+---
+
+Created by **rot32**, shoutout to him. This is currently being employed in SafeGuard, an authentication system with over 10,000 active monthly users. We trust this encryption proves secure.
