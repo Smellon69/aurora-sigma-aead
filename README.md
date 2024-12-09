@@ -2,7 +2,7 @@
 
 ## Overview
 
-Aurora-Sigma is a custom AEAD construction created by my friend, **rot32**, and is used in **SafeGuard** to securely transfer and receive data. It aims to show the structure of an authenticated encryption scheme:
+Aurora-Sigma is a custom AEAD construction created by my friend, **rot32**. It aims to show the structure of an authenticated encryption scheme:
 
 - **Authenticated Encryption**: Ensures that both confidentiality (encryption of the plaintext) and integrity (detection of tampering) are provided.
 - **No Associated Data**: This does not use associated data. The entire message (including the internally generated nonce) is protected by the authentication tag.
@@ -59,4 +59,4 @@ This code is provided as-is, with **no warranty**, under the MIT license. Refer 
 
 ---
 
-Created by **rot32**, shoutout to him. This is currently being employed in SafeGuard, an authentication system with over 10,000 active monthly users. We trust this encryption proves secure.
+Created by **rot32**, shoutout to him.
