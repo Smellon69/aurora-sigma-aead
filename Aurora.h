@@ -9,10 +9,6 @@
  * This code demonstrates an Authenticated Encryption with Associated Data (AEAD)
  * scheme built on top of a custom block cipher ("Aurora") and a polynomial-based
  * MAC approach.
- *
- * WARNING: This is purely a conceptual demonstration. The block cipher, S-boxes,
- * MDS matrices, GF(2^128) multiplication, and other details are not proven secure.
- * DO NOT USE THIS CODE IN PRODUCTION.
  * 
  * Key points:
  * - No associated data.
