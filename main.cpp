@@ -1,38 +1,55 @@
 #include "Aurora.h"
 #include <stdio.h>
+#include <string.h>
+#include <stdint.h>
 
-int main() {
-    uint8_t key[32];
-    int i;
-    for (i = 0; i < 32; i++) key[i] = (uint8_t)i;
+int main(void) {
+    /* Prepare a 32‐byte base key */
+    uint8_t base_key[32];
+    for (int i = 0; i < 32; i++) {
+        base_key[i] = (uint8_t)i;
+    }
 
+    /* Init AEAD context in quantum‐resistant mode */
     AuroraSigma as;
-    aurora_sigma_init(&as, key);
+    aurora_sigma_init_qr(&as, base_key);
 
+    /* Define plaintext and (optional) AAD */
     const char* msg = "Hello, world!";
-    size_t msg_len = 13;
+    size_t      msg_len = strlen(msg);
 
-    // Allocate message buffer
-    // max size needed = plaintext_len + 36
-    uint8_t enc[13 + 36];
-    size_t enc_len;
+    const uint8_t* aad = NULL;  // no associated data
+    size_t         aad_len = 0;
 
-    if (!aurora_sigma_encrypt(&as, key, (const uint8_t*)msg, msg_len, enc, &enc_len)) {
+    /* Encrypt */
+    uint8_t  enc[msg_len + 36];     // nonce(12)+salt(8)+ct+tag(16)
+    size_t   enc_len;
+    if (!aurora_sigma_encrypt(
+        &as,
+        base_key,
+        (const uint8_t*)msg, msg_len,
+        aad, aad_len,
+        enc, &enc_len
+    )) {
         printf("Encrypt failed.\n");
         return 1;
     }
 
-    uint8_t dec[13]; // same size as original plaintext
-    size_t dec_len;
-
-    if (!aurora_sigma_decrypt(&as, key, enc, enc_len, dec, &dec_len)) {
+    /* Decrypt */
+    uint8_t  dec[msg_len];
+    size_t   dec_len;
+    if (!aurora_sigma_decrypt(
+        &as,
+        base_key,
+        enc, enc_len,
+        aad, aad_len,
+        dec, &dec_len
+    )) {
         printf("Decrypt failed.\n");
         return 1;
     }
 
-    printf("Decrypted: ");
-    for (i = 0; i < (int)dec_len; i++) putchar(dec[i]);
-    putchar('\n');
-
+    /* Print out */
+    printf("Decrypted: %.*s\n", (int)dec_len, dec);
     return 0;
 }
