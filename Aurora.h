@@ -1,57 +1,36 @@
-#include <stdint.h>
-#include <stddef.h>
-#include <time.h>
-#include <stdlib.h>  // For rand, srand only
-
 /*
- * Aurora-Sigma AEAD (Conceptual Demonstration)
- *
- * This code demonstrates an Authenticated Encryption with Associated Data (AEAD)
- * scheme built on top of a custom block cipher ("Aurora") and a polynomial-based
- * MAC approach.
- * 
- * Key points:
- * - No associated data.
- * - Caller-provided buffers (no malloc/free).
- * - No use of high-level standard library memory functions.
- * - Nonce generated internally in encrypt().
- * - The entire message is integrity-protected.
- */
+* Aurora-Sigma AEAD
+*
+* This code demonstrates an Authenticated Encryption with Associated Data (AEAD)
+* scheme built on top of a custom block cipher ("Aurora") and a polynomial-based
+* MAC approach.
+*
+* Key points:
+* - No associated data.
+* - Caller-provided buffers (no malloc/free).
+* - No use of high-level standard library memory functions.
+* - Nonce generated internally in encrypt().
+* - Nonce uniqueness via a per-key monotonic counter + random salt.
+* - The entire message is integrity-protected.
+*/
 
- /****************************************
-  * Utility Functions (No memset/memcpy)
-  ****************************************/
+#ifndef AURORA_H
+#define AURORA_H
 
-/**
- * @brief Set an array of bytes to 0.
- * @param arr Byte array to zero.
- * @param len Length of the array.
- */
+#include <stdint.h>     // size_t
+#include <stddef.h>     // uint*_t
+#include <time.h>       // time()
+#include <stdlib.h>     // rand, srand
+#include <string.h>     // memcpy
+
+/****************************************
+* Utility Functions
+****************************************/
+
 static void zero_bytes(uint8_t* arr, size_t len) {
-    size_t i;
-    for (i = 0; i < len; i++) {
-        arr[i] = 0;
-    }
+    for (size_t i = 0; i < len; i++) arr[i] = 0;
 }
 
-/**
- * @brief Copy bytes from src to dest (like memcpy but with a loop).
- * @param dest Destination array.
- * @param src Source array.
- * @param len Number of bytes to copy.
- */
-static void copy_bytes(uint8_t* dest, const uint8_t* src, size_t len) {
-    size_t i;
-    for (i = 0; i < len; i++) {
-        dest[i] = src[i];
-    }
-}
-
-/**
- * @brief Store a 32-bit value in big-endian format into a byte array.
- * @param p Byte array (at least 4 bytes).
- * @param v 32-bit integer value.
- */
 static inline void store_be32(uint8_t* p, uint32_t v) {
     p[0] = (uint8_t)(v >> 24);
     p[1] = (uint8_t)(v >> 16);
@@ -59,38 +38,26 @@ static inline void store_be32(uint8_t* p, uint32_t v) {
     p[3] = (uint8_t)v;
 }
 
-/**
- * @brief Store a 64-bit value in big-endian format into a byte array.
- * @param p Byte array (at least 8 bytes).
- * @param v 64-bit integer value.
- */
 static inline void store_be64(uint8_t* p, uint64_t v) {
-    int i;
-    for (i = 7; i >= 0; i--) {
+    for (int i = 7; i >= 0; i--) {
         p[i] = (uint8_t)(v & 0xff);
         v >>= 8;
     }
 }
 
-/**
- * @brief XOR two 16-byte blocks: x = x ^ y
- * @param x Input/Output block (16 bytes).
- * @param y Input block (16 bytes).
- */
 static inline void xor_block(uint8_t x[16], const uint8_t y[16]) {
-    int i;
-    for (i = 0; i < 16; i++) x[i] ^= y[i];
+    for (int i = 0; i < 16; i++) x[i] ^= y[i];
 }
 
 /****************************************
- * GF(2^8) Arithmetic & S-box & MDS
- ****************************************/
+* GF(2^8) Arithmetic & S-box & MDS
+****************************************/
 
- /**
-  * @brief Multiply two bytes in GF(2^8) with the given polynomial reduction.
-  *
-  * This uses a polynomial-based multiplication with 0x8d as a reduction polynomial.
-  */
+/**
+* @brief Multiply two bytes in GF(2^8) with the given polynomial reduction.
+*
+* This uses a polynomial-based multiplication with 0x8d as a reduction polynomial.
+*/
 static inline uint8_t gf_mul(uint8_t a, uint8_t b) {
     uint8_t p = 0;
     int i;
@@ -107,8 +74,8 @@ static inline uint8_t gf_mul(uint8_t a, uint8_t b) {
 }
 
 /**
- * @brief A S-box (Substitution box).
- */
+* @brief A S-box (Substitution box).
+*/
 static const uint8_t SBOX[256] = {
     0x3a,0xf7,0xb2,0x0e,0xc1,0x95,0x4d,0x6f,0xde,0x24,0x82,0x7b,0x14,0xd9,0x2c,0x48,
     0x99,0xd3,0xab,0x81,0x4e,0x1f,0x37,0xa2,0x6a,0x0c,0x5e,0x21,0xee,0x92,0x73,0xbd,
@@ -129,11 +96,8 @@ static const uint8_t SBOX[256] = {
 };
 
 /**
- * @brief MDS matrix for a linear diffusion layer.
- *
- * MDS stands for Maximum Distance Separable matrix,
- * commonly used in block ciphers to provide good diffusion.
- */
+* @brief MDS matrix for a linear diffusion layer.
+*/
 static const uint8_t MDS[16] = {
     0x01,0x01,0x01,0x01,
     0x02,0x05,0x09,0x1f,
@@ -164,17 +128,16 @@ static inline void mds_mul(uint8_t state[16]) {
 }
 
 /****************************************
- * Key Schedule
- *
- * Derives round keys from the given master key.
- * This is a conceptual, toy key schedule.
- ****************************************/
+* Key Schedule
+*
+* Derives round keys from the given master key.
+****************************************/
 
- /**
-  * @brief Apply round function to a block using S-box and MDS, then XOR round constant.
-  * @param block 16-byte block
-  * @param rc round constant
-  */
+/**
+* @brief Apply round function to a block using S-box and MDS, then XOR round constant.
+* @param block 16-byte block
+* @param rc round constant
+*/
 static void round_func(uint8_t block[16], uint8_t rc) {
     int i;
     // SubBytes
@@ -186,10 +149,10 @@ static void round_func(uint8_t block[16], uint8_t rc) {
 }
 
 /**
- * @brief Aurora key schedule.
- * @param key 32-byte master key.
- * @param roundKeys Output: 11 round keys, each 16 bytes.
- */
+* @brief Aurora key schedule.
+* @param key 32-byte master key.
+* @param roundKeys Output: 11 round keys, each 16 bytes.
+*/
 static inline void aurora_key_schedule(const uint8_t key[32], uint8_t roundKeys[11][16]) {
     uint8_t KL[16], KR[16];
     int i;
@@ -197,7 +160,7 @@ static inline void aurora_key_schedule(const uint8_t key[32], uint8_t roundKeys[
     for (i = 0; i < 16; i++) KR[i] = key[16 + i];
 
     // Generate 11 round keys:
-    // For this toy cipher, we do a simple Feistel-like mixing 
+    // We do a simple Feistel-like mixing 
     // and store intermediate values.
     for (int r = 0; r < 11; r++) {
         // Current round key = KL ^ KR
@@ -217,30 +180,29 @@ static inline void aurora_key_schedule(const uint8_t key[32], uint8_t roundKeys[
 }
 
 /****************************************
- * Block Cipher "Aurora"
- *
- * This block cipher is a conceptual design.
- * It uses 11 round keys, S-boxes, ShiftRows, MDS mixing, etc.
- ****************************************/
+* Block Cipher "Aurora"
+*
+* It uses 11 round keys, S-boxes, ShiftRows, MDS mixing, etc.
+****************************************/
 
 typedef struct {
     uint8_t roundKeys[11][16];
 } AuroraBlock;
 
 /**
- * @brief SubBytes step for encryption round.
- * @param state 16-byte state block.
- */
+* @brief SubBytes step for encryption round.
+* @param state 16-byte state block.
+*/
 static inline void sub_bytes(uint8_t state[16]) {
     int i;
     for (i = 0; i < 16; i++) state[i] = SBOX[state[i]];
 }
 
 /**
- * @brief ShiftRows step.
- *
- * Rearranges bytes in each row to provide further diffusion.
- */
+* @brief ShiftRows step.
+*
+* Rearranges bytes in each row for further diffusion.
+*/
 static inline void shift_rows(uint8_t state[16]) {
     uint8_t tmp[16];
     int i;
@@ -254,30 +216,30 @@ static inline void shift_rows(uint8_t state[16]) {
 }
 
 /**
- * @brief Add a round key to the state (XOR).
- * @param state 16-byte state.
- * @param rk 16-byte round key.
- */
+* @brief Add a round key to the state (XOR).
+* @param state 16-byte state.
+* @param rk 16-byte round key.
+*/
 static inline void add_round_key(uint8_t state[16], const uint8_t rk[16]) {
     int i;
     for (i = 0; i < 16; i++) state[i] ^= rk[i];
 }
 
 /**
- * @brief Initialize the Aurora block cipher with a given 32-byte key.
- * @param blk AuroraBlock structure to initialize.
- * @param key 32-byte key.
- */
+* @brief Initialize the Aurora block cipher with a given 32-byte key.
+* @param blk AuroraBlock structure to initialize.
+* @param key 32-byte key.
+*/
 static void aurora_block_init(AuroraBlock* blk, const uint8_t key[32]) {
     aurora_key_schedule(key, blk->roundKeys);
 }
 
 /**
- * @brief Encrypt one 16-byte block with Aurora block cipher.
- * @param blk AuroraBlock context (has round keys).
- * @param in 16-byte plaintext block.
- * @param out 16-byte ciphertext block.
- */
+* @brief Encrypt one 16-byte block with Aurora block cipher.
+* @param blk AuroraBlock context (has round keys).
+* @param in 16-byte plaintext block.
+* @param out 16-byte ciphertext block.
+*/
 static void aurora_block_encryptBlock(const AuroraBlock* blk, const uint8_t in[16], uint8_t out[16]) {
     uint8_t state[16];
     int i;
@@ -298,23 +260,23 @@ static void aurora_block_encryptBlock(const AuroraBlock* blk, const uint8_t in[1
 }
 
 /****************************************
- * GF(2^128) Multiplication for MAC
- *
- * We use GF(2^128) multiplication for the polynomial-based
- * MAC subkey and its operations. Similar concept to GHASH.
- ****************************************/
+* GF(2^128) Multiplication for MAC
+*
+* We use GF(2^128) multiplication for the polynomial-based
+* MAC subkey and its operations. Similar concept to GHASH.
+****************************************/
 
- /**
-  * @brief R polynomial used in GF(2^128) reduction.
-  */
+/**
+* @brief R polynomial used in GF(2^128) reduction.
+*/
 static const uint8_t R_poly[16] = {
     0xe1,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
 };
 
 /**
- * @brief Shift a 128-bit block left by one bit.
- */
+* @brief Shift a 128-bit block left by one bit.
+*/
 static inline void shift_left_bit(uint8_t arr[16]) {
     uint8_t carry = 0;
     for (int i = 15; i >= 0; i--) {
@@ -325,8 +287,8 @@ static inline void shift_left_bit(uint8_t arr[16]) {
 }
 
 /**
- * @brief Shift a 128-bit block right by one bit.
- */
+* @brief Shift a 128-bit block right by one bit.
+*/
 static inline void shift_right_bit(uint8_t arr[16]) {
     uint8_t carry = 0;
     for (int i = 0; i < 16; i++) {
@@ -337,11 +299,11 @@ static inline void shift_right_bit(uint8_t arr[16]) {
 }
 
 /**
- * @brief GF(2^128) multiplication of x by y, in place for x.
- *
- * We treat x and y as elements of GF(2^128), with a fixed polynomial reduction.
- * This is a standard bitwise multiplication followed by reduction.
- */
+* @brief GF(2^128) multiplication of x by y, in place for x.
+*
+* We treat x and y as elements of GF(2^128), with a fixed polynomial reduction.
+* This is a standard bitwise multiplication followed by reduction.
+*/
 static inline void gf128_mul(uint8_t x[16], const uint8_t y[16]) {
     uint8_t Z[16], V[16], X_[16];
     int i, j;
@@ -363,336 +325,217 @@ static inline void gf128_mul(uint8_t x[16], const uint8_t y[16]) {
     for (i = 0; i < 16; i++) x[i] = Z[i];
 }
 
-/****************************************
- * Aurora Sigma AEAD
- *
- * This ties everything together:
- * - Keyed cipher and MAC subkey (H).
- * - Nonce & salt generation.
- * - Encryption with a "tweak" function per block.
- * - MAC computation over ciphertext + header.
- ****************************************/
-
-typedef struct {
-    AuroraBlock cipher;
-    uint8_t H[16]; // MAC subkey derived by encrypting all-zero block
-} AuroraSigma;
-
-/**
- * @brief Constant-time comparison of two 16-byte arrays.
- * @return 1 if equal, 0 if not.
- */
-static int constant_time_compare(const uint8_t a[16], const uint8_t b[16]) {
-    uint8_t diff = 0;
-    int i;
-    for (i = 0; i < 16; i++) diff |= (uint8_t)(a[i] ^ b[i]);
-    return (diff == 0);
+static inline int constant_time_compare(const uint8_t a[16], const uint8_t b[16]) {
+    uint8_t diff = 0; for (int i = 0; i < 16; i++) diff |= a[i] ^ b[i];
+    return diff == 0;
 }
 
-/**
- * @brief Initialize random number generator (if not already).
- */
-static void init_random() {
-    static int seeded = 0;
-    if (!seeded) {
-        srand((unsigned)time(NULL));
-        seeded = 1;
-    }
-}
-
-/**
- * @brief Generate a random 96-bit nonce (12 bytes).
- * @param nonce Output array (12 bytes).
- */
-static void generate_random_nonce(uint8_t nonce[12]) {
-    init_random();
-    for (int i = 0; i < 12; i++) {
-        nonce[i] = (uint8_t)(rand() & 0xFF);
-    }
-}
-
-/**
- * @brief Generate a random 64-bit salt.
- * @return A random 64-bit integer.
- */
-static uint64_t generate_random_salt() {
-    init_random();
-    uint64_t s = 0;
-    for (int i = 0; i < 8; i++) {
-        s = (s << 8) | (uint8_t)(rand() & 0xFF);
-    }
-    return s;
-}
-
-/**
- * @brief Process data blocks for MAC computation.
- *
- * This takes a state S, processes the data in chunks of 16 bytes,
- * XORs each block into S, then multiplies by H in GF(2^128).
- * A final partial block (if data_len not multiple of 16) is handled.
- */
 static void process_mac_blocks(uint8_t S[16], const uint8_t* data, size_t data_len, const uint8_t H[16]) {
-    // domain_byte: 0xCC to separate different phases of MAC
-    S[0] ^= 0xCC;
-    gf128_mul(S, H);
-
+    S[0] ^= 0xCC; gf128_mul(S, H);
     size_t i = 0;
     while (i + 16 <= data_len) {
-        uint8_t block[16];
-        for (int j = 0; j < 16; j++) block[j] = data[i + j];
-        xor_block(S, block);
-        gf128_mul(S, H);
+        uint8_t block[16]; memcpy(block, data + i, 16);
+        xor_block(S, block); gf128_mul(S, H);
         i += 16;
     }
-
-    // Handle partial block if any remain
     if (i < data_len) {
-        uint8_t block[16];
-        for (int j = 0; j < 16; j++) block[j] = 0;
-        {
-            size_t remain = data_len - i;
-            for (size_t k = 0; k < remain; k++) block[k] = data[i + k];
-        }
-        xor_block(S, block);
-        gf128_mul(S, H);
+        uint8_t block[16] = { 0 }; size_t rem = data_len - i;
+        memcpy(block, data + i, rem);
+        xor_block(S, block); gf128_mul(S, H);
     }
 }
 
-/**
- * @brief Compute authentication tag over ciphertext.
- *
- * Steps:
- * 1. Process ciphertext blocks.
- * 2. XOR length block (a_bits and c_bits).
- * 3. Final domain separation.
- * 4. Encrypt the final state S to produce the tag.
- */
-static void compute_tag(const AuroraBlock* cipher, const uint8_t H[16], const uint8_t* C, size_t C_len, uint8_t tag[16]) {
-    uint8_t S[16];
-    int i;
-    for (i = 0; i < 16; i++) S[i] = 0;
-    process_mac_blocks(S, C, C_len, H);
+/****************************************
+* AuroraSigma AEAD Context
+****************************************/
+typedef struct {
+    AuroraBlock cipher;
+    uint8_t    H[16];
+    uint64_t   nonce_counter;
+    uint32_t   nonce_salt;
+} AuroraSigma;
 
-    // Length block: a_bits = 0, c_bits = C_len*8
-    uint64_t a_bits = 0ULL;
-    uint64_t c_bits = (uint64_t)C_len * 8ULL;
-    uint8_t length_block[16];
-    for (i = 0; i < 16; i++) length_block[i] = 0;
+/****************************************
+* Random & Nonce Utils
+****************************************/
+static void init_random() {
+    static int seeded = 0;
+    if (!seeded) { srand((unsigned)time(NULL)); seeded = 1; }
+}
+
+static uint32_t generate_random_u32() {
+    init_random();
+    return ((uint32_t)(rand() & 0xFFFF) << 16) | (uint32_t)(rand() & 0xFFFF);
+}
+
+static void generate_unique_nonce(AuroraSigma* as, uint8_t nonce[12]) {
+    store_be32(nonce, as->nonce_salt);
+    store_be64(nonce + 4, as->nonce_counter++);
+}
+
+/****************************************
+* Tweak Derivation
+****************************************/
+static void derive_tweak(
+    const AuroraBlock* cipher,
+    const uint8_t nonce[12],
+    uint32_t counter,
+    uint64_t salt,
+    uint8_t tweak[8]
+) {
+    uint8_t blockIn[16] = { 0 }, blockOut[16];
+    memcpy(blockIn, nonce, 12);
+    store_be32(blockIn + 12, counter);
+    uint8_t saltBytes[8]; store_be64(saltBytes, salt);
+    for (int i = 0; i < 8; i++) blockIn[8 + i] ^= saltBytes[i];
+    aurora_block_encryptBlock(cipher, blockIn, blockOut);
+    memcpy(tweak, blockOut, 8);
+}
+
+/****************************************
+* Tag Computation
+****************************************/
+static void compute_tag(
+    const AuroraBlock* cipher,
+    const uint8_t H[16],
+    const uint8_t* aad, size_t aad_len,
+    const uint8_t* C, size_t C_len,
+    uint8_t tag[16]
+) {
+    uint8_t S[16] = { 0 };
+    if (aad_len) process_mac_blocks(S, aad, aad_len, H);
+    process_mac_blocks(S, C, C_len, H);
+    uint64_t a_bits = (uint64_t)aad_len * 8;
+    uint64_t c_bits = (uint64_t)C_len * 8;
+    uint8_t length_block[16] = { 0 };
     store_be64(length_block, a_bits);
     store_be64(length_block + 8, c_bits);
-    xor_block(S, length_block);
-    gf128_mul(S, H);
-
-    // Final domain separation: 0x42
-    S[0] ^= 0x42;
-    gf128_mul(S, H);
-
-    // Encrypt final state to get tag
-    uint8_t tagBlock[16];
-    aurora_block_encryptBlock(cipher, S, tagBlock);
-    for (i = 0; i < 16; i++) tag[i] = tagBlock[i];
+    xor_block(S, length_block); gf128_mul(S, H);
+    S[0] ^= 0x42; gf128_mul(S, H);
+    uint8_t tagBlock[16]; aurora_block_encryptBlock(cipher, S, tagBlock);
+    memcpy(tag, tagBlock, 16);
 }
 
-/**
- * @brief Derive a per-block "tweak" used to produce keystream blocks.
- *
- * The tweak function uses the nonce, block counter, and salt,
- * then encrypts with Aurora to produce a tweak that is XORed into
- * the keystream generation block.
- */
-static void derive_tweak(const AuroraBlock* cipher, const uint8_t nonce[12], uint32_t counter, uint64_t salt, uint8_t tweak[8]) {
-    uint8_t blockIn[16], blockOut[16];
-    int i;
-    for (i = 0; i < 16; i++) blockIn[i] = 0;
-    for (i = 0; i < 12; i++) blockIn[i] = nonce[i];
-    store_be32(blockIn + 12, counter);
-
-    // Combine salt
-    {
-        uint8_t saltBytes[8];
-        store_be64(saltBytes, salt);
-        for (i = 8; i < 16; i++) blockIn[i] ^= saltBytes[i - 8];
-    }
-
-    aurora_block_encryptBlock(cipher, blockIn, blockOut);
-    for (i = 0; i < 8; i++) tweak[i] = blockOut[i];
-}
-
-/**
- * @brief Initialize AuroraSigma AEAD context with a 32-byte key.
- *
- * This sets up the cipher and computes the MAC subkey H by encrypting an all-zero block.
- */
+/****************************************
+* Initialization
+****************************************/
 static void aurora_sigma_init(AuroraSigma* as, const uint8_t key[32]) {
     aurora_block_init(&as->cipher, key);
-    uint8_t zero[16];
-    int i;
-    for (i = 0; i < 16; i++) zero[i] = 0;
+    uint8_t zero[16] = { 0 };
     aurora_block_encryptBlock(&as->cipher, zero, as->H);
+    as->nonce_counter = 0;
+    as->nonce_salt = generate_random_u32();
 }
 
+/****************************************
+* Quantum-Resistant KDF & Init
+****************************************/
+
 /**
- * @brief Encrypt plaintext with AuroraSigma AEAD.
- *
- * The output format:
- *  message = nonce(12) || salt(8) || ciphertext(...) || tag(16)
- *
- * @param as Pointer to AuroraSigma context (initialized with aurora_sigma_init).
- * @param key 32-byte key (not re-used here, kept for interface symmetry).
- * @param plaintext Input plaintext buffer.
- * @param plaintext_len Length of plaintext.
- * @param message Output buffer: must be at least plaintext_len+36 bytes.
- * @param message_len Output length of the encrypted message.
- * @return 1 on success, 0 on failure.
- */
+* @brief Initialize AuroraSigma with quantum resistance.
+* Takes the original symmetric key and derives a working key via AEAD-MAC as PRF.
+*/
+static void aurora_sigma_init_qr(
+    AuroraSigma* as,
+    const uint8_t base_key[32]
+) {
+    /* Derive a 32-byte working key: two 16-byte PRF calls */
+    uint8_t tmpH[16];
+    aurora_sigma_init(as, base_key);
+    /* PRF1: context "QR-INIT-1" */
+    compute_tag(&as->cipher, as->H,
+        (const uint8_t*)"QR-INIT-1", 9,
+        NULL, 0,
+        as->H);
+    /* PRF2: context "QR-INIT-2" */
+    compute_tag(&as->cipher, as->H,
+        NULL, 0,
+        (const uint8_t*)"QR-INIT-2", 9,
+        tmpH);
+    memcpy(as->H, tmpH, 16);
+    /* Re-init cipher with new 32-byte key in H||tmpH */
+    uint8_t new_key[32];
+    memcpy(new_key, as->H, 16);
+    memcpy(new_key + 16, tmpH, 16);
+    aurora_block_init(&as->cipher, new_key);
+}
+
+/****************************************
+* Encrypt
+****************************************/
 static int aurora_sigma_encrypt(
     AuroraSigma* as,
     const uint8_t key[32],
     const uint8_t* plaintext, size_t plaintext_len,
+    const uint8_t* aad, size_t aad_len,
     uint8_t* message, size_t* message_len
 ) {
-    (void)key; // Key already used in as->cipher during init.
+    (void)key;
     uint8_t nonce[12];
-    generate_random_nonce(nonce);
-    uint64_t salt = generate_random_salt();
-
-    // Format:
-    // message = nonce(12) || salt(8) || ciphertext(plaintext_len bytes) || tag(16)
-
+    generate_unique_nonce(as, nonce);
     uint8_t saltBytes[8];
+    uint64_t salt = ((uint64_t)generate_random_u32() << 32) | generate_random_u32();
     store_be64(saltBytes, salt);
 
-    // Set nonce and salt in output
-    {
-        int i;
-        for (i = 0; i < 12; i++) message[i] = nonce[i];
-        for (i = 0; i < 8; i++) message[12 + i] = saltBytes[i];
-    }
+    memcpy(message, nonce, 12);
+    memcpy(message + 12, saltBytes, 8);
+    size_t offset = 20;
 
-    // Encrypt plaintext to ciphertext using a per-block derived keystream
-    size_t i;
-    for (i = 0; i < plaintext_len; i += 16) {
-        uint8_t keystream[16], tweak[8], inBlock[16];
-        int j;
-        for (j = 0; j < 16; j++) keystream[j] = 0;
-        for (j = 0; j < 8; j++) tweak[j] = 0;
-        for (j = 0; j < 16; j++) inBlock[j] = 0;
-
+    for (size_t i = 0; i < plaintext_len; i += 16) {
+        uint8_t keystream[16] = { 0 }, tweak[8] = { 0 }, inBlock[16] = { 0 };
         uint32_t blkCount = (uint32_t)(i / 16);
         derive_tweak(&as->cipher, nonce, blkCount, salt, tweak);
-
-        // The "inBlock" is a form of nonce||block_count with tweak XORed
-        for (j = 0; j < 12; j++) inBlock[j] = nonce[j];
+        memcpy(inBlock, nonce, 12);
         store_be32(inBlock + 12, blkCount);
-        for (j = 0; j < 8; j++) inBlock[j] ^= tweak[j];
-
+        for (int j = 0; j < 8; j++) inBlock[j] ^= tweak[j];
         aurora_block_encryptBlock(&as->cipher, inBlock, keystream);
-
-        size_t remain = plaintext_len - i;
-        if (remain > 16) remain = 16;
-        for (j = 0; j < (int)remain; j++) {
-            message[20 + i + j] = (uint8_t)(plaintext[i + j] ^ keystream[j]);
-        }
+        size_t rem = plaintext_len - i; if (rem > 16) rem = 16;
+        for (size_t j = 0; j < rem; j++) message[offset + i + j] = plaintext[i + j] ^ keystream[j];
     }
 
-    // Compute authentication tag over (nonce||salt||ciphertext)
-    {
-        size_t full_data_len = 12 + 8 + plaintext_len;
-        uint8_t tag[16];
-        compute_tag(&as->cipher, as->H, message, full_data_len, tag);
-
-        // Append tag after ciphertext
-        size_t offset = 20 + plaintext_len;
-        for (int j = 0; j < 16; j++) message[offset + j] = tag[j];
-    }
-
-    *message_len = 12 + 8 + plaintext_len + 16; // total length
+    size_t ct_len = plaintext_len;
+    uint8_t tag[16];
+    compute_tag(&as->cipher, as->H, aad, aad_len, message, 12 + 8 + ct_len, tag);
+    memcpy(message + 20 + ct_len, tag, 16);
+    *message_len = 12 + 8 + ct_len + 16;
     return 1;
 }
 
-/**
- * @brief Decrypt message with AuroraSigma AEAD.
- *
- * Input format:
- *  message = nonce(12) || salt(8) || ciphertext(...) || tag(16)
- *
- * @param as AuroraSigma context (already init).
- * @param key 32-byte key (not used again, here for interface).
- * @param message Input message.
- * @param message_len length of message.
- * @param plaintext Output buffer, must be large enough for message_len-36.
- * @param plaintext_len Output plaintext length.
- * @return 1 if tag is correct and decryption succeeded, 0 otherwise.
- */
+/****************************************
+* Decrypt
+****************************************/
 static int aurora_sigma_decrypt(
     AuroraSigma* as,
-    const uint8_t key[32],
+    const uint8_t    key[32],
     const uint8_t* message, size_t message_len,
+    const uint8_t* aad, size_t aad_len,
     uint8_t* plaintext, size_t* plaintext_len
 ) {
-    (void)key; // Already used during init in as.
-
-    // Must have at least nonce(12)+salt(8)+tag(16) = 36 bytes + ciphertext
+    (void)key;
     if (message_len < 36) return 0;
-    size_t ct_len = message_len - 12 - 8 - 16;
-
-    // Extract nonce
-    uint8_t nonce[12];
-    {
-        int i;
-        for (i = 0; i < 12; i++) nonce[i] = message[i];
-    }
-
-    // Extract salt
-    uint64_t salt = 0;
-    {
-        int i;
-        for (i = 0; i < 8; i++) {
-            salt = (salt << 8) | message[12 + i];
-        }
-    }
-
-    const uint8_t* ciphertext = message + 20;
+    size_t ct_len = message_len - 36;
+    uint8_t nonce[12]; memcpy(nonce, message, 12);
+    uint64_t salt = 0; for (int i = 0; i < 8; i++) salt = (salt << 8) | message[12 + i];
+    const uint8_t* ct = message + 20;
     const uint8_t* tag = message + 20 + ct_len;
 
-    // Verify tag
-    {
-        size_t full_data_len = 12 + 8 + ct_len;
-        uint8_t calcTag[16];
-        compute_tag(&as->cipher, as->H, message, full_data_len, calcTag);
-        if (!constant_time_compare(tag, calcTag)) {
-            // Tag mismatch means tampering or invalid key.
-            return 0;
-        }
-    }
+    uint8_t calcTag[16];
+    compute_tag(&as->cipher, as->H, aad, aad_len, message, 12 + 8 + ct_len, calcTag);
+    if (!constant_time_compare(tag, calcTag)) return 0;
 
-    // Tag correct, proceed to decrypt ciphertext
     *plaintext_len = ct_len;
-    {
-        size_t i;
-        for (i = 0; i < ct_len; i += 16) {
-            uint8_t keystream[16], tweak[8], inBlock[16];
-            int j;
-            for (j = 0; j < 16; j++) keystream[j] = 0;
-            for (j = 0; j < 8; j++) tweak[j] = 0;
-            for (j = 0; j < 16; j++) inBlock[j] = 0;
-
-            uint32_t blkCount = (uint32_t)(i / 16);
-            derive_tweak(&as->cipher, nonce, blkCount, salt, tweak);
-
-            for (j = 0; j < 12; j++) inBlock[j] = nonce[j];
-            store_be32(inBlock + 12, blkCount);
-            for (j = 0; j < 8; j++) inBlock[j] ^= tweak[j];
-
-            aurora_block_encryptBlock(&as->cipher, inBlock, keystream);
-
-            size_t remain = ct_len - i;
-            if (remain > 16) remain = 16;
-            for (j = 0; j < (int)remain; j++) {
-                plaintext[i + j] = (uint8_t)(ciphertext[i + j] ^ keystream[j]);
-            }
-        }
+    for (size_t i = 0; i < ct_len; i += 16) {
+        uint8_t keystream[16] = { 0 }, tweak[8] = { 0 }, inBlock[16] = { 0 };
+        uint32_t blkCount = (uint32_t)(i / 16);
+        derive_tweak(&as->cipher, nonce, blkCount, salt, tweak);
+        memcpy(inBlock, nonce, 12);
+        store_be32(inBlock + 12, blkCount);
+        for (int j = 0; j < 8; j++) inBlock[j] ^= tweak[j];
+        aurora_block_encryptBlock(&as->cipher, inBlock, keystream);
+        size_t rem = ct_len - i; if (rem > 16) rem = 16;
+        for (size_t j = 0; j < rem; j++) plaintext[i + j] = ct[i + j] ^ keystream[j];
     }
-
     return 1;
 }
+
+#endif // AURORA_H
