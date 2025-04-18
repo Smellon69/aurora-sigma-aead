@@ -2,61 +2,74 @@
 
 ## Overview
 
-Aurora-Sigma is a custom AEAD construction created by my friend, **rot32**. It aims to show the structure of an authenticated encryption scheme:
+Aurora‑Sigma is a self‑contained C implementation of an AEAD (Authenticated Encryption with Associated Data) scheme built around the custom **Aurora** block cipher and a polynomial‑based MAC. Key features include:
 
-- **Authenticated Encryption**: Ensures that both confidentiality (encryption of the plaintext) and integrity (detection of tampering) are provided.
-- **No Associated Data**: This does not use associated data. The entire message (including the internally generated nonce) is protected by the authentication tag.
-- **Single-Message Interface**: The encryption function returns a single message consisting of `nonce || ciphertext || tag`. The decryption function only requires the secret key and this combined message to recover the original plaintext and verify integrity.
+- **Authenticated Encryption + AAD**: Supports encryption of a plaintext plus optional Associated Data (AAD). Both ciphertext and AAD are integrity‑protected.
+- **Nonce‑Reuse Protection**: Generates a unique 96‑bit nonce per message using a per‑key monotonic counter + random salt, preventing accidental reuse.
+- **Quantum‑Resistant KDF**: Internal PRF‑based key derivation to transform a 256‑bit base key into a working key.
+- **Single‐Message Format**: Outputs a single message: `nonce (12) || salt (8) || ciphertext || tag (16)`.
 
-## What This Code Does
+## What’s New
 
-- **Key Schedule and Block Cipher**: A custom block cipher (128-bit blocks, 256-bit key) with substitution (S-box), diffusion (MDS matrix), and a simple Feistel-based key schedule.
-- **GF(2^128) MAC Computation**: A polynomial-based MAC over Galois Field operations to produce the authentication tag.
-- **Nonce Generation**: The nonce is generated automatically during encryption and placed at the start of the output message.
-- **Integrity of Entire Message**: If any byte of the nonce, ciphertext, or tag is altered, decryption will fail.
+- **`aurora_sigma_encrypt` / `aurora_sigma_decrypt`**
+  - Added `const uint8_t *aad, size_t aad_len` parameters.
+  - Message layout changed to include an 8‑byte salt immediately after the 12‑byte nonce.
+
+- **Initialization Functions**
+  - **Classical mode**: `aurora_sigma_init(&ctx, key32)`
+  - **Quantum‑resistant mode**: `aurora_sigma_init_qr(&ctx, base_key32)`
+    - Derives a fresh 32‑byte working key via two distinct PRF calls of the AEAD MAC.
 
 ## Files
 
-- **Aurora.h**:  
-  The header file containing the `AuroraSigma` class and all necessary functions (block cipher, MAC, etc.).  
-  Key points:
-  - `AuroraSigma` class provides `encrypt()` and `decrypt()` functions.
-  - `encrypt()` returns a single vector containing `nonce || ciphertext || tag`.
-  - `decrypt()` takes the key and the combined message to recover plaintext.
+- **Aurora.h**
+  - Declares:
+    - `void aurora_sigma_init(AuroraSigma *ctx, const uint8_t key[32]);`
+    - `void aurora_sigma_init_qr(AuroraSigma *ctx, const uint8_t base_key[32]);`
+    - `int  aurora_sigma_encrypt(AuroraSigma *ctx, const uint8_t key[32],
+                                 const uint8_t *plaintext, size_t plaintext_len,
+                                 const uint8_t *aad,       size_t aad_len,
+                                 uint8_t *message,         size_t *message_len);`
+    - `int  aurora_sigma_decrypt(AuroraSigma *ctx, const uint8_t key[32],
+                                 const uint8_t *message,   size_t message_len,
+                                 const uint8_t *aad,       size_t aad_len,
+                                 uint8_t *plaintext,       size_t *plaintext_len);`
+  - Implements the Aurora block cipher, polynomial MAC, tweak derivation, AAD‑aware tag, nonce+salt generator, and QR KDF—all in portable C.
 
-- **main.cpp**:  
-  A demonstration of how to:
-  - Generate a key (randomly generated in this example).
-  - Encrypt a plaintext message into `nonce || ciphertext || tag`.
-  - Decrypt on the "server" side using just the key and the received message.
+- **main.c**
+  - Demonstrates:
+    1. Preparing a 32‑byte base key.
+    2. Initializing in QR mode via `aurora_sigma_init_qr()`.
+    3. Encrypting a plaintext (with optional AAD) into `nonce||salt||ct||tag`.
+    4. Decrypting back to recover the original message.
 
 ## Usage
 
-1. **Clone the repository.**
-   
+1. **Clone the repo**
    ```bash
    git clone https://github.com/SafeGuard-Protection/aurora-sigma-aead.git
    cd aurora-sigma-aead
    ```
 
-2. **Compile using a modern C/C++ compiler:**
-   
+2. **Compile with a C compiler**
    ```bash
-   g++ -std=c++17 -O2 -o aurora_demo main.cpp
+   gcc -std=c11 -O2 -o aurora_demo main.c
    ```
 
-3. **Run the executable:**
-   
+3. **Run the demo**
    ```bash
    ./aurora_demo
    ```
-   
-   You will see the encryption and decryption in action.
+   You should see:
+   ```
+   Decrypted: Hello, world!
+   ```
+
+## Security Notes
+
+- This is a **proof‑of‑concept**. The Aurora cipher has **not** undergone formal cryptanalysis. I am not responsible if the Chinese miltary uses this and their data gets leaked to the Warthunder forums.
+- The QR KDF provides a **first‑line** of post‑quantum resilience, but the core block cipher remains classical.
 
 ## License
 
-This code is provided as-is, with **no warranty**, under the MIT license. Refer to the [LICENSE](LICENSE) file for more details.
-
----
-
-Created by **rot32**, shoutout to him.
+Provided under the **MIT License**—see [LICENSE](LICENSE) for details.
